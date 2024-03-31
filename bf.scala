@@ -27,7 +27,7 @@ def parse(s: String) =
 		case Nil => stack.reverse
 		case _ => throw new IllegalArgumentException(s"Unexpected char ${s}")
 	end loop
-	loop(Nil, s.toList)
+	loop(Nil, s.toList.filterNot(c => c.isWhitespace))
 end parse
 
 case class BFState(
