@@ -2,6 +2,7 @@
 package mybf
 
 import scala.annotation.tailrec
+import scala.collection.mutable
 
 enum BFCommand:
 	case Increment
@@ -10,69 +11,97 @@ enum BFCommand:
 	case MoveLeft
 	case Input
 	case Output
-	case Loop(content: (List[BFCommand]))
+	case Loop(content: List[BFCommand])
 end BFCommand
 
-def parse(s: String) = 
-	def loop(stack: List[BFCommand], s: List[Char]): List[BFCommand] = s match
-		case '+'::rest => loop(BFCommand.Increment::stack, rest)
-		case '-'::rest => loop(BFCommand.Decrement::stack, rest)
-		case '>'::rest => loop(BFCommand.MoveRight::stack, rest)
-		case '<'::rest => loop(BFCommand.MoveLeft::stack, rest)
-		case ','::rest => loop(BFCommand.Input::stack, rest)
-		case '.'::rest => loop(BFCommand.Output::stack, rest)
-		case '['::rest =>
-			val (loopContent, remaining) = rest.span(_ != ']')
-			loop(BFCommand.Loop(loop(Nil, loopContent))::stack, remaining.tail)
-		case Nil => stack.reverse
-		case _ => throw new IllegalArgumentException(s"Unexpected char ${s}")
-	end loop
-	loop(Nil, s.toList.filterNot(c => c.isWhitespace))
-end parse
+ 
+def extractLoop(chars: List[Char]): (List[Char], List[Char]) =
+  @tailrec
+  def loop(chars: List[Char], depth: Int, acc: List[Char]): (List[Char], List[Char]) = chars match {
+    case ']' :: rest if depth == 1 =>
+      (acc, rest)
+    case ']' :: rest =>
+      loop(rest, depth - 1, acc :+ ']')
+    case '[' :: rest =>
+      loop(rest, depth + 1, acc :+ '[')
+    case c :: rest =>
+      loop(rest, depth, acc :+ c)
+    case Nil =>
+      throw new IllegalArgumentException(s"Unmatched '[' in program")
+  }
+  loop(chars, 1, Nil)
+end extractLoop
 
-case class BFState(
-	memory: Array[Int],
-	pointer: Int,
-	input: List[Char],
-	output: List[Char],
-	program: List[BFCommand]
+
+def parse(s: String): List[BFCommand] = {
+  def loop(stack: List[BFCommand], s: List[Char]): List[BFCommand] = s match
+    case '+'::rest =>
+      loop(BFCommand.Increment::stack, rest)
+    case '-'::rest =>
+      loop(BFCommand.Decrement::stack, rest)
+    case '>'::rest =>
+      loop(BFCommand.MoveRight::stack, rest)
+    case '<'::rest =>
+      loop(BFCommand.MoveLeft::stack, rest)
+    case ','::rest =>
+      loop(BFCommand.Input::stack, rest)
+    case '.'::rest =>
+      loop(BFCommand.Output::stack, rest)
+    case '['::rest =>
+      val (loopContent, remaining) = extractLoop(rest)
+      loop(BFCommand.Loop(loop(Nil, loopContent))::stack, remaining)
+    case Nil => 
+      stack.reverse
+    case _ =>
+      throw new IllegalArgumentException(s"Unexpected char ${stack.head}")
+  end loop
+
+  loop(Nil, s.toList.filterNot(_.isWhitespace))
+}
+
+
+class BFState(
+	var memory: mutable.ArraySeq[Int],
+	var pointer: Int,
+	var input: mutable.Stack[Char],
+	var output: mutable.Stack[Char],
+	var program: mutable.Stack[BFCommand]
 )
 
-@tailrec
-def eval(state: BFState): BFState = state.program match
-	case Nil => state
-	case BFCommand.Increment::rest =>
-		state.memory(state.pointer) += 1
-		eval(state.copy(program = rest))
-	case BFCommand.Decrement::rest =>
-		state.memory(state.pointer) -= 1
-		eval(state.copy(program = rest))
-	case BFCommand.MoveRight::rest =>
-		eval(state.copy(pointer = state.pointer + 1, program = rest))
-	case BFCommand.MoveLeft::rest =>
-		eval(state.copy(pointer = state.pointer - 1, program = rest))
-	case BFCommand.Output::rest =>
-		eval(state.copy(output = state.memory(state.pointer).toChar::state.output, program = rest))
-	case BFCommand.Input::rest =>
-		eval(state.copy(memory = state.memory.updated(state.pointer, state.input.head.toInt), input = state.input.tail, program = rest))
-	case BFCommand.Loop(loopContent)::rest =>
-		if (state.memory(state.pointer) == 0)
-		then eval(state.copy(program = rest))
-		else eval(state.copy(program = loopContent ++ (BFCommand.Loop(loopContent)::rest)))
-	case _ => throw new IllegalArgumentException(s"unexpected command ${state.program}")
+def eval(state: BFState): BFState =
+  while !state.program.isEmpty do
+    val top = state.program.pop() 
+    top match
+      case BFCommand.Increment =>
+        state.memory(state.pointer) += 1
+      case BFCommand.Decrement =>
+        state.memory(state.pointer) -= 1
+      case BFCommand.MoveRight =>
+        state.pointer += 1
+      case BFCommand.MoveLeft =>
+        state.pointer -= 1
+      case BFCommand.Output =>
+        state.output.push(state.memory(state.pointer).toChar)
+      case BFCommand.Input =>
+        state.memory(state.pointer) = state.input.pop().toInt
+      case BFCommand.Loop(loopContent) =>
+        if (state.memory(state.pointer) != 0) then
+          state.program.push(BFCommand.Loop(loopContent))
+          state.program.pushAll(loopContent.reverse)
+  return state
 end eval
 
 def run(program: String, input: String): String =
-	val commands = parse(program)
-	val initialState = BFState(
-		Array.fill(30000)(0),
+  val commands = parse(program)
+  var initialState = BFState(
+		mutable.ArraySeq.fill(10000000)(0),
 		0,
-		input.toList,
-		Nil,
-		commands
+		mutable.Stack(input: _*),
+		mutable.Stack.empty,
+		mutable.Stack.from(commands)
 	)
-	val finalState = eval(initialState)
-	finalState.output.reverse.mkString
+  val finalState = eval(initialState)
+  finalState.output.reverse.mkString
 end run
 
 @main
